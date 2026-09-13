@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from .local_tools import get_today, get_weather
-from .history import ConversationStore
+from .history import ConversationStore, keep_last_turns
 from .mcp_runtime import call_mcp_tool, connect_mcp, load_mcp_tools
 
 
@@ -127,7 +127,10 @@ async def run_agent() -> None:
             ", ".join(sorted(mcp_tool_names)),
         )
 
-        messages = history_store.load(SYSTEM_MESSAGE)
+        messages = keep_last_turns(
+            history_store.load(SYSTEM_MESSAGE),
+            max_turns=10,
+        )
         print("已加载历史消息：", len(messages), "条")
 
         while True:
@@ -144,6 +147,7 @@ async def run_agent() -> None:
                 continue
 
             messages.append({"role": "user", "content": task})
+            messages = keep_last_turns(messages, max_turns=10)
             history_store.save(messages)
 
             for _ in range(6):
