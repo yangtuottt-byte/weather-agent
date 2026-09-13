@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from .local_tools import get_today, get_weather
+from .history import ConversationStore
 from .mcp_runtime import call_mcp_tool, connect_mcp, load_mcp_tools
 
 
@@ -47,6 +48,18 @@ LOCAL_TOOLS = [
         },
     },
 ]
+
+
+SYSTEM_MESSAGE = {
+    "role": "system",
+    "content": (
+        "你是天气助手，请用中文简短回答。"
+        "查询今天日期使用 get_today。"
+        "查询北京、上海、广州的当前气温使用 get_weather。"
+        "可以根据 MCP 工具说明使用其他工具。"
+        "不要编造天气数据。"
+    ),
+}
 
 
 def create_client() -> OpenAI:
@@ -97,6 +110,10 @@ async def execute_tool(
 
 async def run_agent() -> None:
     client = create_client()
+    project_root = Path(__file__).resolve().parents[2]
+    history_store = ConversationStore(
+        project_root / ".agent_data" / "conversation.json"
+    )
 
     print("正在加载 MCP 工具……")
     async with connect_mcp() as mcp_client:
@@ -110,28 +127,24 @@ async def run_agent() -> None:
             ", ".join(sorted(mcp_tool_names)),
         )
 
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是天气助手，请用中文简短回答。"
-                    "查询今天日期使用 get_today。"
-                    "查询北京、上海、广州的当前气温使用 get_weather。"
-                    "可以根据 MCP 工具说明使用其他工具。"
-                    "不要编造天气数据。"
-                ),
-            },
-        ]
+        messages = history_store.load(SYSTEM_MESSAGE)
+        print("已加载历史消息：", len(messages), "条")
 
         while True:
             task = input("\n你想问什么？输入‘退出’结束：").strip()
             if task == "退出":
                 print("对话结束。")
                 break
+            if task in {"清空历史", "/reset"}:
+                history_store.reset()
+                messages = [SYSTEM_MESSAGE]
+                print("对话历史已清空。")
+                continue
             if not task:
                 continue
 
             messages.append({"role": "user", "content": task})
+            history_store.save(messages)
 
             for _ in range(6):
                 response = client.chat.completions.create(
@@ -143,7 +156,8 @@ async def run_agent() -> None:
                 )
 
                 message = response.choices[0].message
-                messages.append(message)
+                messages.append(message.model_dump(exclude_none=True))
+                history_store.save(messages)
 
                 if not message.tool_calls:
                     print("模型回答：", message.content)
@@ -171,5 +185,6 @@ async def run_agent() -> None:
                         "tool_call_id": tool_call.id,
                         "content": str(result),
                     })
+                    history_store.save(messages)
             else:
                 print("已达到最多6轮，本次问题还没有完成。")
