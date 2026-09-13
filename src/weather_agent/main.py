@@ -13,6 +13,7 @@ from openai import OpenAI
 from .local_tools import get_today, get_weather
 from .history import ConversationStore, keep_last_turns
 from .mcp_runtime import call_mcp_tool, connect_mcp, load_mcp_tools
+from .observability import EventLogger
 
 
 logger = logging.getLogger(__name__)
@@ -94,10 +95,13 @@ async def execute_tool(
     arguments: dict,
     mcp_client,
     mcp_tool_names: set[str],
+    event_logger: EventLogger | None = None,
 ) -> str:
     """Execute one tool and turn failures into a readable tool result."""
     started_at = time.perf_counter()
     logger.info("tool_start name=%s", name)
+    if event_logger:
+        event_logger.record("tool_started", tool_name=name)
 
     try:
         if name == "get_today":
@@ -120,10 +124,25 @@ async def execute_tool(
             name,
             elapsed_ms,
         )
+        if event_logger:
+            event_logger.record(
+                "tool_completed",
+                tool_name=name,
+                elapsed_ms=round(elapsed_ms, 1),
+                success=True,
+            )
         return result
 
     except Exception:
         logger.exception("工具执行失败：%s", name)
+        if event_logger:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            event_logger.record(
+                "tool_completed",
+                tool_name=name,
+                elapsed_ms=round(elapsed_ms, 1),
+                success=False,
+            )
         return "工具执行失败，请稍后重试。"
 
 
@@ -131,6 +150,9 @@ async def run_agent() -> None:
     configure_logging()
     client = create_client()
     project_root = Path(__file__).resolve().parents[2]
+    event_logger = EventLogger(
+        project_root / ".agent_data" / "events.jsonl"
+    )
     history_store = ConversationStore(
         project_root / ".agent_data" / "conversation.json"
     )
@@ -187,6 +209,11 @@ async def run_agent() -> None:
                     model_elapsed_ms,
                     len(message.tool_calls or []),
                 )
+                event_logger.record(
+                    "model_request_completed",
+                    elapsed_ms=round(model_elapsed_ms, 1),
+                    tool_calls=len(message.tool_calls or []),
+                )
                 messages.append(message.model_dump(exclude_none=True))
                 history_store.save(messages)
 
@@ -208,6 +235,7 @@ async def run_agent() -> None:
                         arguments,
                         mcp_client,
                         mcp_tool_names,
+                        event_logger,
                     )
 
                     print("工具执行结果：", result)
