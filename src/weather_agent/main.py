@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,6 +16,14 @@ from .mcp_runtime import call_mcp_tool, connect_mcp, load_mcp_tools
 
 
 logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    """Configure concise process logs without exposing message content."""
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
 
 LOCAL_TOOLS = [
@@ -87,21 +96,31 @@ async def execute_tool(
     mcp_tool_names: set[str],
 ) -> str:
     """Execute one tool and turn failures into a readable tool result."""
+    started_at = time.perf_counter()
+    logger.info("tool_start name=%s", name)
+
     try:
         if name == "get_today":
-            return get_today()
-
-        if name == "get_weather":
-            return get_weather(arguments["city"])
-
-        if name in mcp_tool_names:
-            return await call_mcp_tool(
+            result = get_today()
+        elif name == "get_weather":
+            result = get_weather(arguments["city"])
+        elif name in mcp_tool_names:
+            result = await call_mcp_tool(
                 mcp_client,
                 name,
                 arguments,
             )
+        else:
+            logger.warning("tool_unknown name=%s", name)
+            return f"错误：未知工具 {name}"
 
-        return f"错误：未知工具 {name}"
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "tool_success name=%s elapsed_ms=%.1f",
+            name,
+            elapsed_ms,
+        )
+        return result
 
     except Exception:
         logger.exception("工具执行失败：%s", name)
@@ -109,6 +128,7 @@ async def execute_tool(
 
 
 async def run_agent() -> None:
+    configure_logging()
     client = create_client()
     project_root = Path(__file__).resolve().parents[2]
     history_store = ConversationStore(
@@ -151,6 +171,7 @@ async def run_agent() -> None:
             history_store.save(messages)
 
             for _ in range(6):
+                model_started_at = time.perf_counter()
                 response = client.chat.completions.create(
                     model="deepseek-v4-flash",
                     messages=messages,
@@ -160,6 +181,12 @@ async def run_agent() -> None:
                 )
 
                 message = response.choices[0].message
+                model_elapsed_ms = (time.perf_counter() - model_started_at) * 1000
+                logger.info(
+                    "model_request_completed elapsed_ms=%.1f tool_calls=%d",
+                    model_elapsed_ms,
+                    len(message.tool_calls or []),
+                )
                 messages.append(message.model_dump(exclude_none=True))
                 history_store.save(messages)
 
