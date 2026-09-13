@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from openai import OpenAI
 
 from .local_tools import get_today, get_weather
 from .mcp_runtime import call_mcp_tool, connect_mcp, load_mcp_tools
+
+
+logger = logging.getLogger(__name__)
 
 
 LOCAL_TOOLS = [
@@ -61,6 +65,34 @@ def create_client() -> OpenAI:
         api_key=api_key,
         base_url="https://api.deepseek.com",
     )
+
+
+async def execute_tool(
+    name: str,
+    arguments: dict,
+    mcp_client,
+    mcp_tool_names: set[str],
+) -> str:
+    """Execute one tool and turn failures into a readable tool result."""
+    try:
+        if name == "get_today":
+            return get_today()
+
+        if name == "get_weather":
+            return get_weather(arguments["city"])
+
+        if name in mcp_tool_names:
+            return await call_mcp_tool(
+                mcp_client,
+                name,
+                arguments,
+            )
+
+        return f"错误：未知工具 {name}"
+
+    except Exception:
+        logger.exception("工具执行失败：%s", name)
+        return "工具执行失败，请稍后重试。"
 
 
 async def run_agent() -> None:
@@ -126,18 +158,12 @@ async def run_agent() -> None:
                     print("模型选择的工具：", name)
                     print("模型提供的参数：", arguments)
 
-                    if name == "get_today":
-                        result = get_today()
-                    elif name == "get_weather":
-                        result = get_weather(arguments["city"])
-                    elif name in mcp_tool_names:
-                        result = await call_mcp_tool(
-                            mcp_client,
-                            name,
-                            arguments,
-                        )
-                    else:
-                        result = "错误：未知工具"
+                    result = await execute_tool(
+                        name,
+                        arguments,
+                        mcp_client,
+                        mcp_tool_names,
+                    )
 
                     print("工具执行结果：", result)
                     messages.append({
