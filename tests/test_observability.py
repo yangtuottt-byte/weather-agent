@@ -1,6 +1,10 @@
 import json
 
-from weather_agent.observability import EventLogger
+from weather_agent.observability import (
+    EventLogger,
+    load_events,
+    tool_sequence_for_run,
+)
 
 
 def test_event_logger_writes_json_lines(tmp_path):
@@ -30,3 +34,18 @@ def test_event_logger_can_keep_a_given_run_id(tmp_path):
     logger.record("agent_started")
 
     assert logger.run_id == "run-123"
+
+
+def test_tool_sequence_is_filtered_by_run_and_success(tmp_path):
+    path = tmp_path / "events.jsonl"
+    first = EventLogger(path, run_id="run-1")
+    second = EventLogger(path, run_id="run-2")
+
+    first.record("tool_completed", tool_name="get_weather", success=True)
+    first.record("tool_completed", tool_name="packing_list", success=False)
+    second.record("tool_completed", tool_name="get_today", success=True)
+
+    events = load_events(path)
+
+    assert tool_sequence_for_run(events, "run-1") == ["get_weather"]
+    assert tool_sequence_for_run(events, "run-2") == ["get_today"]
