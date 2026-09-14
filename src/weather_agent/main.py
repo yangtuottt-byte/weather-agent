@@ -153,6 +153,7 @@ async def run_agent() -> None:
     event_logger = EventLogger(
         project_root / ".agent_data" / "events.jsonl"
     )
+    print("本次运行 ID：", event_logger.run_id)
     history_store = ConversationStore(
         project_root / ".agent_data" / "conversation.json"
     )

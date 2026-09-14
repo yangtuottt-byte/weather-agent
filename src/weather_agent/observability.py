@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,12 +12,14 @@ from typing import Any
 class EventLogger:
     """Append one JSON object per runtime event."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, run_id: str | None = None):
         self.path = Path(path)
+        self.run_id = run_id or uuid.uuid4().hex
 
     def record(self, event: str, **fields: Any) -> None:
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_id": self.run_id,
             "event": event,
             **fields,
         }
